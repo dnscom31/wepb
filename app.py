@@ -9,16 +9,19 @@ from PIL import Image, ImageOps
 
 
 st.set_page_config(
-    page_title="WEBP → 1000×1000 JPG 테두리정리 변환기",
+    page_title="이미지 → 1000×1000 JPG 테두리정리 변환기",
     page_icon="🖼️",
     layout="wide",
 )
 
-st.title("WEBP → 1000×1000 JPG 테두리정리 변환기")
+st.title("이미지 → 1000×1000 JPG 테두리정리 변환기")
 st.caption(
-    "WEBP 이미지를 업로드하면 바깥 여백을 정리한 뒤, 옷 전체를 최대한 보존하면서 "
-    "1000×1000 JPG로 변환합니다. 남는 정사각형 영역은 사진 가장자리 픽셀을 늘려 채웁니다."
+    "WEBP, PNG, JPG, JPEG, BMP, TIF, TIFF, GIF 이미지를 업로드하면 "
+    "바깥 여백을 정리한 뒤, 옷 전체를 최대한 보존하면서 1000×1000 JPG로 변환합니다. "
+    "남는 정사각형 영역은 사진 가장자리 픽셀을 늘려 채웁니다."
 )
+
+SUPPORTED_TYPES = ["webp", "png", "jpg", "jpeg", "bmp", "tif", "tiff", "gif"]
 
 
 def safe_filename(name: str, suffix: str = "_1000x1000") -> str:
@@ -33,7 +36,22 @@ def open_uploaded_image(uploaded_file) -> Image.Image | None:
     try:
         image = Image.open(BytesIO(uploaded_file.getvalue()))
         image = ImageOps.exif_transpose(image)
-        return image.convert("RGB")
+        if getattr(image, "is_animated", False):
+            try:
+                image.seek(0)
+            except Exception:
+                pass
+
+        if image.mode in ("RGBA", "LA"):
+            bg = Image.new("RGBA", image.size, (255, 255, 255, 255))
+            image = Image.alpha_composite(bg, image.convert("RGBA")).convert("RGB")
+        elif image.mode == "P":
+            image = image.convert("RGBA")
+            bg = Image.new("RGBA", image.size, (255, 255, 255, 255))
+            image = Image.alpha_composite(bg, image).convert("RGB")
+        else:
+            image = image.convert("RGB")
+        return image
     except Exception:
         return None
 
@@ -52,11 +70,6 @@ def image_to_jpg_bytes(image: Image.Image, quality: int) -> bytes:
 
 
 def trim_edges(image: Image.Image, trim_percent: float) -> Image.Image:
-    """
-    사진 바깥 테두리/여백을 비율로 정리합니다.
-    예: 4%라면 좌우 합계 4%, 상하 합계 4%를 잘라냅니다.
-    옷 자체를 자르는 기능이 아니라 바깥 여백을 줄여 상품이 더 크게 보이게 하는 기능입니다.
-    """
     src = image.convert("RGB")
     if trim_percent <= 0:
         return src
@@ -74,9 +87,6 @@ def trim_edges(image: Image.Image, trim_percent: float) -> Image.Image:
 
 
 def fit_contain_1000(image: Image.Image, bg_color: tuple[int, int, int]) -> Image.Image:
-    """
-    원본 전체를 1000×1000 안에 넣고, 남는 영역은 배경색으로 채웁니다.
-    """
     canvas_size = 1000
     src = image.convert("RGB")
     ratio = min(canvas_size / src.width, canvas_size / src.height)
@@ -92,10 +102,6 @@ def fit_contain_1000(image: Image.Image, bg_color: tuple[int, int, int]) -> Imag
 
 
 def fit_cover_1000(image: Image.Image) -> Image.Image:
-    """
-    1000×1000을 꽉 채우도록 중앙 크롭합니다.
-    옷 일부가 잘릴 수 있으므로 의류 상품컷에는 기본 권장하지 않습니다.
-    """
     canvas_size = 1000
     src = image.convert("RGB")
     ratio = max(canvas_size / src.width, canvas_size / src.height)
@@ -109,12 +115,6 @@ def fit_cover_1000(image: Image.Image) -> Image.Image:
 
 
 def edge_extend_1000(image: Image.Image, bg_color: tuple[int, int, int]) -> Image.Image:
-    """
-    원본 비율을 유지해 1000×1000 안에 넣고,
-    남는 좌우/상하 영역은 사진 가장자리 1px을 늘려 자연스럽게 채웁니다.
-
-    이 함수가 이전 대표이미지 마네킹컷에서 사용한 핵심 방식입니다.
-    """
     canvas_size = 1000
     src = image.convert("RGB")
 
@@ -164,12 +164,6 @@ def trim_then_edge_extend_1000(
     trim_percent: float,
     bg_color: tuple[int, int, int],
 ) -> Image.Image:
-    """
-    기본 추천 방식:
-    1. 바깥 여백을 먼저 정리
-    2. 옷 전체를 보존하면서 1000×1000에 맞춤
-    3. 남는 공간은 가장자리 픽셀을 늘려 채움
-    """
     trimmed = trim_edges(image, trim_percent)
     return edge_extend_1000(trimmed, bg_color)
 
@@ -243,17 +237,19 @@ with st.sidebar:
     st.caption("추천값: 테두리 정리 3~6%. 옷이 잘리면 0~2%로 낮추세요.")
 
 uploaded_files = st.file_uploader(
-    "WEBP 파일 업로드",
-    type=["webp"],
+    "이미지 파일 업로드",
+    type=SUPPORTED_TYPES,
     accept_multiple_files=True,
-    help="여러 장을 한 번에 업로드할 수 있습니다.",
+    help="WEBP, PNG, JPG, JPEG, BMP, TIF, TIFF, GIF 파일을 여러 장 한 번에 업로드할 수 있습니다.",
 )
 
 if not uploaded_files:
-    st.info("변환할 .webp 이미지를 업로드해 주세요.")
+    st.info("변환할 이미지 파일을 업로드해 주세요.")
     st.stop()
 
 st.success(f"{len(uploaded_files)}장 업로드됨")
+
+st.caption("지원 확장자: " + ", ".join(ext.upper() for ext in SUPPORTED_TYPES))
 
 zip_buffer = BytesIO()
 converted_count = 0
@@ -303,7 +299,7 @@ if converted_count:
     st.download_button(
         "전체 JPG ZIP 다운로드",
         data=zip_buffer.getvalue(),
-        file_name="webp_to_jpg_1000x1000.zip",
+        file_name="image_to_jpg_1000x1000.zip",
         mime="application/zip",
         type="primary",
         use_container_width=True,
