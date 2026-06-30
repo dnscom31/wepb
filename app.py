@@ -9,15 +9,15 @@ from PIL import Image, ImageOps
 
 
 st.set_page_config(
-    page_title="WEBP → 1000×1000 JPG 스마트 변환기",
+    page_title="WEBP → 1000×1000 JPG 테두리정리 변환기",
     page_icon="🖼️",
     layout="wide",
 )
 
-st.title("WEBP → 1000×1000 JPG 스마트 변환기")
+st.title("WEBP → 1000×1000 JPG 테두리정리 변환기")
 st.caption(
-    "WEBP 이미지를 업로드하면 네이버 스마트스토어 대표이미지에 맞는 1000×1000 JPG로 자동 변환합니다. "
-    "기본값은 모델/상품이 크게 보이도록 자동 스마트 크롭을 적용합니다."
+    "WEBP 이미지를 업로드하면 바깥 여백을 정리한 뒤, 옷 전체를 최대한 보존하면서 "
+    "1000×1000 JPG로 변환합니다. 남는 정사각형 영역은 사진 가장자리 픽셀을 늘려 채웁니다."
 )
 
 
@@ -51,115 +51,32 @@ def image_to_jpg_bytes(image: Image.Image, quality: int) -> bytes:
     return buffer.getvalue()
 
 
-def sample_background_color(image: Image.Image) -> tuple[int, int, int]:
-    rgb = image.convert("RGB")
-    w, h = rgb.size
-    points = [
-        (0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1),
-        (w // 2, 0), (w // 2, h - 1), (0, h // 2), (w - 1, h // 2),
-    ]
-    colors = [rgb.getpixel((max(0, min(w - 1, x)), max(0, min(h - 1, y)))) for x, y in points]
-    return tuple(int(sum(channel) / len(colors)) for channel in zip(*colors))
-
-
-def detect_subject_bbox(image: Image.Image) -> tuple[float, float, float, float] | None:
+def trim_edges(image: Image.Image, trim_percent: float) -> Image.Image:
     """
-    배경과 색 차이가 있는 영역을 상품/모델 영역으로 추정합니다.
-    흰 배경 상품컷, 모델컷, 마네킹컷에서 빠르게 동작하도록 단순한 방식으로 구성했습니다.
+    사진 바깥 테두리/여백을 비율로 정리합니다.
+    예: 4%라면 좌우 합계 4%, 상하 합계 4%를 잘라냅니다.
+    옷 자체를 자르는 기능이 아니라 바깥 여백을 줄여 상품이 더 크게 보이게 하는 기능입니다.
     """
-    rgb = image.convert("RGB")
-    src_w, src_h = rgb.size
-    if src_w < 2 or src_h < 2:
-        return None
-
-    bg = sample_background_color(rgb)
-    preview = rgb.copy()
-    preview.thumbnail((420, 420), Image.Resampling.LANCZOS)
-    px = preview.load()
-    pw, ph = preview.size
-
-    xs: list[int] = []
-    ys: list[int] = []
-
-    threshold = 28
-    for y in range(ph):
-        for x in range(pw):
-            r, g, b = px[x, y]
-            diff = abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2])
-            if diff > threshold * 3:
-                xs.append(x)
-                ys.append(y)
-
-    if not xs or not ys:
-        return None
-
-    left_p, right_p = min(xs), max(xs)
-    top_p, bottom_p = min(ys), max(ys)
-
-    scale_x = src_w / pw
-    scale_y = src_h / ph
-    return (
-        left_p * scale_x,
-        top_p * scale_y,
-        right_p * scale_x,
-        bottom_p * scale_y,
-    )
-
-
-def crop_square(
-    image: Image.Image,
-    crop_side: float,
-    center_x: float,
-    center_y: float,
-) -> Image.Image:
     src = image.convert("RGB")
+    if trim_percent <= 0:
+        return src
+
     w, h = src.size
+    trim_x = int(w * (trim_percent / 100.0) / 2)
+    trim_y = int(h * (trim_percent / 100.0) / 2)
 
-    crop_side = max(1.0, min(float(crop_side), float(w), float(h)))
-    half = crop_side / 2
+    left = min(max(0, trim_x), max(0, w - 2))
+    top = min(max(0, trim_y), max(0, h - 2))
+    right = max(left + 1, w - trim_x)
+    bottom = max(top + 1, h - trim_y)
 
-    left = center_x - half
-    top = center_y - half
-
-    left = max(0.0, min(float(w) - crop_side, left))
-    top = max(0.0, min(float(h) - crop_side, top))
-
-    right = left + crop_side
-    bottom = top + crop_side
-
-    cropped = src.crop((int(left), int(top), int(right), int(bottom)))
-    return cropped.resize((1000, 1000), Image.Resampling.LANCZOS)
+    return src.crop((left, top, right, bottom))
 
 
 def fit_contain_1000(image: Image.Image, bg_color: tuple[int, int, int]) -> Image.Image:
-    canvas_size = 1000
-    src = image.convert("RGB")
-    ratio = min(canvas_size / src.width, canvas_size / src.height)
-    new_w = max(1, int(src.width * ratio))
-    new_h = max(1, int(src.height * ratio))
-    resized = src.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-    canvas = Image.new("RGB", (canvas_size, canvas_size), bg_color)
-    x = (canvas_size - new_w) // 2
-    y = (canvas_size - new_h) // 2
-    canvas.paste(resized, (x, y))
-    return canvas
-
-
-def fit_cover_1000(image: Image.Image) -> Image.Image:
-    canvas_size = 1000
-    src = image.convert("RGB")
-    ratio = max(canvas_size / src.width, canvas_size / src.height)
-    new_w = max(1, int(src.width * ratio))
-    new_h = max(1, int(src.height * ratio))
-    resized = src.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-    left = max(0, (new_w - canvas_size) // 2)
-    top = max(0, (new_h - canvas_size) // 2)
-    return resized.crop((left, top, left + canvas_size, top + canvas_size))
-
-
-def edge_extend_1000(image: Image.Image, bg_color: tuple[int, int, int]) -> Image.Image:
+    """
+    원본 전체를 1000×1000 안에 넣고, 남는 영역은 배경색으로 채웁니다.
+    """
     canvas_size = 1000
     src = image.convert("RGB")
     ratio = min(canvas_size / src.width, canvas_size / src.height)
@@ -168,6 +85,46 @@ def edge_extend_1000(image: Image.Image, bg_color: tuple[int, int, int]) -> Imag
     fitted = src.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
     canvas = Image.new("RGB", (canvas_size, canvas_size), bg_color)
+    x = (canvas_size - new_w) // 2
+    y = (canvas_size - new_h) // 2
+    canvas.paste(fitted, (x, y))
+    return canvas
+
+
+def fit_cover_1000(image: Image.Image) -> Image.Image:
+    """
+    1000×1000을 꽉 채우도록 중앙 크롭합니다.
+    옷 일부가 잘릴 수 있으므로 의류 상품컷에는 기본 권장하지 않습니다.
+    """
+    canvas_size = 1000
+    src = image.convert("RGB")
+    ratio = max(canvas_size / src.width, canvas_size / src.height)
+    new_w = max(1, int(src.width * ratio))
+    new_h = max(1, int(src.height * ratio))
+    fitted = src.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+    left = max(0, (new_w - canvas_size) // 2)
+    top = max(0, (new_h - canvas_size) // 2)
+    return fitted.crop((left, top, left + canvas_size, top + canvas_size))
+
+
+def edge_extend_1000(image: Image.Image, bg_color: tuple[int, int, int]) -> Image.Image:
+    """
+    원본 비율을 유지해 1000×1000 안에 넣고,
+    남는 좌우/상하 영역은 사진 가장자리 1px을 늘려 자연스럽게 채웁니다.
+
+    이 함수가 이전 대표이미지 마네킹컷에서 사용한 핵심 방식입니다.
+    """
+    canvas_size = 1000
+    src = image.convert("RGB")
+
+    ratio = min(canvas_size / src.width, canvas_size / src.height)
+    new_w = max(1, int(src.width * ratio))
+    new_h = max(1, int(src.height * ratio))
+    fitted = src.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+    canvas = Image.new("RGB", (canvas_size, canvas_size), bg_color)
+
     x = (canvas_size - new_w) // 2
     y = (canvas_size - new_h) // 2
     canvas.paste(fitted, (x, y))
@@ -202,73 +159,38 @@ def edge_extend_1000(image: Image.Image, bg_color: tuple[int, int, int]) -> Imag
     return canvas
 
 
-def smart_model_crop_1000(image: Image.Image, zoom_strength: float = 1.0) -> Image.Image:
+def trim_then_edge_extend_1000(
+    image: Image.Image,
+    trim_percent: float,
+    bg_color: tuple[int, int, int],
+) -> Image.Image:
     """
-    이전 대표이미지 생성기 방향:
-    - 모델/상품 영역을 감지
-    - 1000×1000 안에서 모델/상품이 크게 보이도록 정사각형 크롭
-    - 너무 과하게 자르지 않도록 안전 여백 유지
+    기본 추천 방식:
+    1. 바깥 여백을 먼저 정리
+    2. 옷 전체를 보존하면서 1000×1000에 맞춤
+    3. 남는 공간은 가장자리 픽셀을 늘려 채움
     """
-    src = image.convert("RGB")
-    w, h = src.size
-    bbox = detect_subject_bbox(src)
-
-    if bbox is None:
-        return fit_cover_1000(src)
-
-    left, top, right, bottom = bbox
-    bbox_w = max(1.0, right - left)
-    bbox_h = max(1.0, bottom - top)
-
-    side_base = min(w, h)
-
-    # 상품/모델 주변 여백. 값이 작을수록 더 크게 보임.
-    padding_factor = 1.12 - (zoom_strength - 1.0) * 0.10
-    padding_factor = max(1.02, min(1.18, padding_factor))
-
-    desired_side = max(bbox_w, bbox_h) * padding_factor
-
-    # 너무 과하게 확대되어 얼굴/팔/밑단이 잘리지 않도록 제한
-    min_side = side_base * 0.68
-    max_side = side_base
-    crop_side = max(min_side, min(max_side, desired_side))
-
-    center_x = (left + right) / 2
-    center_y = (top + bottom) / 2
-
-    # 모델컷은 얼굴 쪽 여백이 부족하면 답답해 보이므로 살짝 위쪽 기준으로 보정
-    center_y -= crop_side * 0.025
-
-    return crop_square(src, crop_side, center_x, center_y)
-
-
-def mannequin_preserve_1000(image: Image.Image, bg_color: tuple[int, int, int]) -> Image.Image:
-    """
-    마네킹컷/상품 전체컷용.
-    전체가 잘리지 않게 보존하되, 정사각형 부족 영역은 가장자리 확장으로 채움.
-    """
-    return edge_extend_1000(image, bg_color)
+    trimmed = trim_edges(image, trim_percent)
+    return edge_extend_1000(trimmed, bg_color)
 
 
 def convert_image(
     image: Image.Image,
     mode: str,
+    trim_percent: float,
     bg_color: tuple[int, int, int],
-    zoom_strength: float,
 ) -> Image.Image:
-    if mode == "자동 스마트 크롭":
-        return smart_model_crop_1000(image, zoom_strength=zoom_strength)
-    if mode == "모델컷 크게":
-        return smart_model_crop_1000(image, zoom_strength=max(1.15, zoom_strength))
-    if mode == "상품 전체 보존":
-        return mannequin_preserve_1000(image, bg_color)
+    if mode == "테두리 정리 + 가장자리 확장":
+        return trim_then_edge_extend_1000(image, trim_percent, bg_color)
+    if mode == "가장자리 확장만":
+        return edge_extend_1000(image, bg_color)
     if mode == "전체 보존":
         return fit_contain_1000(image, bg_color)
+    if mode == "테두리 정리 + 전체 보존":
+        return fit_contain_1000(trim_edges(image, trim_percent), bg_color)
     if mode == "꽉 채우기":
-        return fit_cover_1000(image)
-    if mode == "가장자리 확장":
-        return edge_extend_1000(image, bg_color)
-    return smart_model_crop_1000(image, zoom_strength=zoom_strength)
+        return fit_cover_1000(trim_edges(image, trim_percent))
+    return trim_then_edge_extend_1000(image, trim_percent, bg_color)
 
 
 with st.sidebar:
@@ -277,28 +199,29 @@ with st.sidebar:
     mode = st.radio(
         "1000×1000 변환 방식",
         [
-            "자동 스마트 크롭",
-            "모델컷 크게",
-            "상품 전체 보존",
+            "테두리 정리 + 가장자리 확장",
+            "가장자리 확장만",
             "전체 보존",
+            "테두리 정리 + 전체 보존",
             "꽉 채우기",
-            "가장자리 확장",
         ],
         index=0,
         help=(
-            "자동 스마트 크롭: 이전 대표이미지 기능처럼 상품/모델이 크게 보이도록 자동 크롭 / "
-            "모델컷 크게: 상반신·착용컷을 더 크게 / "
-            "상품 전체 보존: 마네킹컷·제품컷 전체를 살림"
+            "기본값은 이전 대표이미지 마네킹컷 방식과 같은 '테두리 정리 + 가장자리 확장'입니다. "
+            "옷 전체를 보존하면서 바깥 여백만 줄이고, 남는 정사각형 영역은 사진 가장자리로 채웁니다."
         ),
     )
 
-    zoom_strength = st.slider(
-        "자동 확대 강도",
-        0.8,
-        1.3,
-        1.0,
-        step=0.05,
-        help="자동 스마트 크롭과 모델컷 크게 모드에서만 사용합니다. 높일수록 모델/상품이 더 크게 보입니다.",
+    trim_percent = st.slider(
+        "테두리 정리",
+        0.0,
+        20.0,
+        4.0,
+        step=0.5,
+        help=(
+            "사진 바깥쪽 여백을 조금 잘라 상품을 더 크게 보이게 합니다. "
+            "옷이 잘리면 값을 낮추고, 여백이 너무 많으면 값을 올리세요."
+        ),
     )
 
     bg_choice = st.selectbox(
@@ -316,7 +239,8 @@ with st.sidebar:
     bg_color = bg_map[bg_choice]
 
     quality = st.slider("JPG 품질", 85, 98, 96, step=1)
-    st.caption("기본값은 자동 스마트 크롭 + 품질 96입니다.")
+
+    st.caption("추천값: 테두리 정리 3~6%. 옷이 잘리면 0~2%로 낮추세요.")
 
 uploaded_files = st.file_uploader(
     "WEBP 파일 업로드",
@@ -354,8 +278,8 @@ with ZipFile(zip_buffer, "w") as zipf:
                 result_image = convert_image(
                     source_image,
                     mode=mode,
+                    trim_percent=float(trim_percent),
                     bg_color=bg_color,
-                    zoom_strength=float(zoom_strength),
                 )
 
                 jpg_bytes = image_to_jpg_bytes(result_image, quality)
