@@ -1,25 +1,65 @@
-# 중3 계산교정 7일 Streamlit 앱
+# 중3 계산교정 7일
 
-- 하루 18문제 × 7일 = 126문제
-- 분수 / 부호 혼합 / 번분수 / 제곱근 / 분모 유리화 / 혼합 / 종합
-- 자동채점
-- 90% 미만 오답 재도전
-- 관리자 결과표 + CSV 다운로드
-- 모바일 브라우저 지원
+학생용 계산훈련과 교사용 결과 관리 화면을 제공하는 Streamlit 앱입니다.
+기존 7일·126문항 및 채점 규칙은 `math_engine.py`에 보존했습니다.
 
-## Streamlit Community Cloud 배포
-Entry point: `mid3-calc-homework/streamlit_app.py`
+## 실행
 
-같은 폴더의 `requirements.txt`가 자동으로 사용됩니다.
-
-### 관리자 PIN
-Streamlit Cloud의 Advanced settings > Secrets에 아래처럼 입력하면 됩니다.
-
-```toml
-admin_pin = "원하는PIN"
+```bash
+pip install -r requirements.txt
+streamlit run streamlit_app.py
 ```
 
-Secrets를 설정하지 않으면 임시 기본값은 `2580`입니다. 공개 저장소이므로 실제 운영 전에는 반드시 Secrets로 PIN을 바꾸는 것을 권장합니다.
+GitHub 전체 저장소에서 실행할 때:
 
-## 저장 관련 주의
-현재 제출기록은 SQLite 로컬 파일에 저장됩니다. Streamlit Community Cloud의 로컬 파일은 영구 저장소로 간주하면 안 됩니다. 7일 훈련 중에는 관리자 화면의 CSV 다운로드로 백업할 수 있습니다. 영구 저장/푸시 알림은 다음 단계에서 Supabase 또는 Google Sheets API 같은 외부 저장소를 연결하는 방식이 적절합니다.
+```bash
+streamlit run mid3-calc-homework/streamlit_app.py
+```
+
+Streamlit Community Cloud entry point: `mid3-calc-homework/streamlit_app.py`
+
+## 교사 접속
+
+Streamlit Cloud의 Secrets에 다음 값을 설정합니다.
+
+```toml
+admin_pin = "직접 정한 충분히 긴 PIN"
+```
+
+로컬에서는 `.streamlit/secrets.toml` 또는 `HOMEWORK_ADMIN_PIN` 환경변수로 지정합니다.
+설정이 없으면 교사 접속을 열지 않습니다. 기존 기본 PIN `2580`은 제거했습니다.
+PIN은 개별 교사 계정이나 기관별 권한 분리 기능을 대신하지 않습니다.
+
+## 이번 변경
+
+- 흰 학습지와 녹색 주요 버튼, 일관된 색상·글자·간격
+- 학생 시작 / 6문항씩 풀이 / 결과 요약 / 교사 관리 화면
+- 이전·다음 이동 시 답 보존, 새 학습 시작 시 오답 상태 초기화
+- 이름 미입력 및 미완성 제출 안내
+- 채점 직후 결과 화면, 오답 재도전, 문항별 결과
+- 교사 접속 상태 유지, 학생 검색·상태 필터, 첫 점수와 최근 점수 비교
+- 현재 목록 및 전체 제출 기록 CSV 다운로드
+- 연결을 작업별로 닫는 SQLite 저장 계층; 기존 스키마 유지
+
+## 데이터와 기존 기능의 범위
+
+- 결과 DB는 기존과 동일하게 실행 디렉터리의 `homework.db`입니다.
+  `HOMEWORK_DB_PATH`로 경로를 지정할 수 있습니다.
+- 호스팅 서버의 로컬 파일은 영구 보관을 보장하지 않습니다. 외부 DB는 연결하지 않았습니다.
+- 답은 묶음 이동 시 현재 세션에 유지됩니다. 브라우저 종료 후 복구는 지원하지 않습니다.
+- 학생은 이름으로 구분합니다. 이름 중복·본인 인증·교사별 데이터 분리는 후속 작업입니다.
+- 미제출 목록은 과거 한 번 이상 제출한 학생 기준입니다. 별도 학생 명부는 없습니다.
+- 재도전은 같은 오답 문항입니다. 새 동형문제, 실수 원인 추론, 알림은 추가하지 않았습니다.
+- 기존 학습 개방일은 2026-09-10 기준입니다. 학습 시작일 개인화는 후속 작업입니다.
+- 수식 파서와 유리화·근호 단순화 판정은 기존 코드입니다. 판매 전 별도 검증이 필요합니다.
+
+## 검증
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+126문항의 기대 정답, 입력 누락, 묶음 이동과 답 보존, 재도전 후 점수,
+학생 변경 시 초기화, 교사 인증·필터·로그아웃 흐름을 확인합니다.
+
+디자인 기준과 참고 자료: [DESIGN.md](DESIGN.md)
